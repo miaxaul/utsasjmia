@@ -69,10 +69,11 @@ Kemudian salin isi file sesuai dengan source code yang diberikan.
 
 ### 6. Menyiapkan Frontend
 
-Kembali ke direktori utama project (`utsmia`).
+Kembali ke direktori utama project (`utsmia`) lalu masuk ke direktori (`frontend`).
 
 ```bash
 cd ..
+cd frontend
 ```
 
 Buat file `index.html`.
@@ -118,7 +119,7 @@ Status container seharusnya **Up**.
 
 ---
 
-### 9. Troubleshooting
+### Troubleshooting
 
 Jika terjadi error, cek log container dengan:
 
