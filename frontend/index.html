@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mimii Library Management</title>
+    <style>
+        :root { --primary: #3498db; --success: #27ae60; --danger: #e74c3c; --dark: #2c3e50; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; margin: 0; padding: 20px; color: var(--dark); }
+        .container { max-width: 950px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h2 { text-align: center; color: var(--primary); margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+
+        /* Form Styling */
+        form { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #ddd; }
+        input { padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+        .full-width { grid-column: span 2; }
+
+        .btn { padding: 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.3s; color: white; }
+        .btn-add { background: var(--success); }
+        .btn-update { background: #f39c12; display: none; }
+        .btn-cancel { background: #95a5a6; display: none; }
+
+        /* Table Styling */
+        table { width: 100%; border-collapse: collapse; margin-top: 30px; }
+        th { background: var(--primary); color: white; padding: 15px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #eee; }
+        img { width: 50px; height: 50px; border-radius: 50%; object-fit: cover; border: 2px solid var(--primary); }
+
+        .actions { display: flex; gap: 5px; }
+        .btn-sm { padding: 5px 10px; font-size: 12px; }
+        .edit-bg { background: #f39c12; }
+        .del-bg { background: var(--danger); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>📚 Member Management System</h2>
+
+    <input type="hidden" id="edit-id">
+
+    <form id="memberForm">
+        <input type="text" id="name" placeholder="Full Name" required>
+        <input type="email" id="email" placeholder="Email Address" required>
+        <div class="full-width">
+            <label style="font-size: 12px; color: #666;">Profile Photo (Max 5MB):</label><br>
+            <input type="file" id="photo" accept="image/*" style="width: 97%;">
+        </div>
+
+        <button type="submit" id="btn-add" class="btn btn-add full-width">Add Member</button>
+        <button type="button" id="btn-update" onclick="submitUpdate()" class="btn btn-update">Save Changes</button>
+        <button type="button" id="btn-cancel" onclick="resetForm()" class="btn btn-cancel">Cancel</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th> <th>Photo</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="memberList"></tbody>
+    </table>
+</div>
+
+<script>
+    const API_URL = "http://192.168.0.141:8080";
+
+    // 1. Ambil Data (READ)
+    async function loadMembers() {
+        const res = await fetch(`${API_URL}/users`);
+        const data = await res.json();
+        const tbody = document.getElementById('memberList');
+        tbody.innerHTML = data.map(m => `
+            <tr>
+                <td><b>${m.id}</b></td>
+                <td><img src="${m.photo_url}" alt="pfp"></td>
+                <td>${m.name}</td>
+                <td>${m.email}</td>
+                <td class="actions">
+                    <button class="btn btn-sm edit-bg" onclick="setupEdit(${m.id}, '${m.name}', '${m.email}')">Edit</button>
+                    <button class="btn btn-sm del-bg" onclick="deleteMember(${m.id})">Delete</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    // 2. Tambah Data (CREATE) [cite: 24, 44]
+    document.getElementById('memberForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const photoFile = document.getElementById('photo').files[0];
+
+        if (!photoFile) return alert("Please select a photo!");
+        if (photoFile.size > 5 * 1024 * 1024) return alert("File too large (Max 5MB)!");
+
+        const formData = new FormData();
+        formData.append('name', document.getElementById('name').value);
+        formData.append('email', document.getElementById('email').value);
+        formData.append('photo', photoFile);
+
+        const res = await fetch(`${API_URL}/users`, { method: 'POST', body: formData });
+        if (res.ok) {
+            alert("Member Added!");
+            resetForm();
+            loadMembers();
+        }
+    };
+
+    // 3. Setup Mode Edit
+    function setupEdit(id, name, email) {
+        document.getElementById('edit-id').value = id;
+        document.getElementById('name').value = name;
+        document.getElementById('email').value = email;
+
+        document.getElementById('btn-add').style.display = 'none';
+        document.getElementById('btn-update').style.display = 'block';
+        document.getElementById('btn-cancel').style.display = 'block';
+    }
+
+    // 4. Kirim Update (PUT) [cite: 27, 29]
+    async function submitUpdate() {
+        const id = document.getElementById('edit-id').value;
+        const formData = new FormData();
+        formData.append('name', document.getElementById('name').value);
+        formData.append('email', document.getElementById('email').value);
+
+        const photoFile = document.getElementById('photo').files[0];
+        if (photoFile) {
+            if (photoFile.size > 5 * 1024 * 1024) return alert("New photo too large!");
+            formData.append('photo', photoFile);
+        }
+
+        const res = await fetch(`${API_URL}/users/${id}`, { method: 'PUT', body: formData });
+        if (res.ok) {
+            alert("Updated Successfully!");
+            resetForm();
+            loadMembers();
+        }
+    }
+
+    // 5. Hapus Data (DELETE) [cite: 28]
+    async function deleteMember(id) {
+        if (confirm("Are you sure?")) {
+            const res = await fetch(`${API_URL}/users/${id}`, { method: 'DELETE' });
+            if (res.ok) loadMembers();
+        }
+    }
+
+    function resetForm() {
+        document.getElementById('memberForm').reset();
+        document.getElementById('edit-id').value = '';
+        document.getElementById('btn-add').style.display = 'block';
+        document.getElementById('btn-update').style.display = 'none';
+        document.getElementById('btn-cancel').style.display = 'none';
+    }
+
+    loadMembers();
+</script>
+</body>
+</html>

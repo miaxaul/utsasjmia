@@ -1,0 +1,101 @@
+import os, time, logging
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from minio import Minio
+from io import BytesIO
+
+# Logging untuk debugging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("API-Mimii")
+
+# Konfigurasi Database [cite: 38, 43]
+DB_URL = f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}/{os.getenv('DB_NAME')}"
+engine = create_engine(DB_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class Member(Base):
+    __tablename__ = "members"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    email = Column(String)
+    photo_name = Column(String)
+
+# Retry loop agar tidak crash saat DB booting
+for i in range(10):
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database Connected!")
+        break
+    except:
+        logger.warning("Waiting for Database...")
+        time.sleep(5)
+
+# Konfigurasi MinIO [cite: 39, 43]
+minio_client = Minio(os.getenv("MINIO_ENDPOINT"), access_key=os.getenv("MINIO_ROOT_USER"),
+                     secret_key=os.getenv("MINIO_ROOT_PASSWORD"), secure=False)
+BUCKET = os.getenv("MINIO_BUCKET")
+
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+def get_db():
+    db = SessionLocal()
+    try: yield db
+    finally: db.close()
+
+@app.on_event("startup")
+def init_minio():
+    if not minio_client.bucket_exists(BUCKET):
+        minio_client.make_bucket(BUCKET)
+
+# --- ENDPOINTS CRUD [cite: 29, 54] ---
+
+@app.get("/users") # Read All [cite: 26]
+def read_users(db: Session = Depends(get_db)):
+    users = db.query(Member).all()
+    return [{"id": u.id, "name": u.name, "email": u.email,
+             "photo_url": minio_client.get_presigned_url("GET", BUCKET, u.photo_name)} for u in users]
+
+@app.post("/users") # Create [cite: 24]
+async def create_user(name: str = Form(...), email: str = Form(...), photo: UploadFile = File(...), db: Session = Depends(get_db)):
+    content = await photo.read()
+    if len(content) > 5 * 1024 * 1024: raise HTTPException(400, "File > 5MB!") # Validasi
+
+    file_name = f"{int(time.time())}_{photo.filename}"
+    minio_client.put_object(BUCKET, file_name, BytesIO(content), len(content))
+
+    db_user = Member(name=name, email=email, photo_name=file_name)
+    db.add(db_user); db.commit()
+    return {"message": "Success"}
+
+@app.put("/users/{user_id}") # Update [cite: 27]
+async def update_user(user_id: int, name: str = Form(None), email: str = Form(None), photo: UploadFile = File(None), db: Session = Depends(get_db)):
+    user = db.query(Member).filter(Member.id == user_id).first()
+    if not user: raise HTTPException(404, "Not Found")
+
+    if name: user.name = name
+    if email: user.email = email
+    if photo:
+        content = await photo.read()
+        if len(content) > 5 * 1024 * 1024: raise HTTPException(400, "File > 5MB!")
+        try: minio_client.remove_object(BUCKET, user.photo_name) # Hapus file lama
+        except: pass
+        new_file = f"upd_{int(time.time())}_{photo.filename}"
+        minio_client.put_object(BUCKET, new_file, BytesIO(content), len(content))
+        user.photo_name = new_file
+
+    db.commit()
+    return {"message": "Updated"}
+
+@app.delete("/users/{user_id}") # Delete
+def delete_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(Member).filter(Member.id == user_id).first()
+    if user:
+        try: minio_client.remove_object(BUCKET, user.photo_name) # Hapus dari MinIO
+        except: pass
+        db.delete(user); db.commit()
+    return {"message": "Deleted"}
